@@ -9,20 +9,60 @@ const SPACE_ID = 'yisol/IDM-VTON';
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 5000;
 
+// Cache for the duplicated client
+let cachedClient = null;
+
 /**
  * Sleep utility
  */
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Download image to temp file and return path
+ * Fetch image as Blob from URL
  */
-const downloadToTempFile = async (url, prefix) => {
+const fetchImageBlob = async (url) => {
     const response = await axios.get(url, { responseType: 'arraybuffer' });
-    const tempDir = os.tmpdir();
-    const tempPath = path.join(tempDir, `${prefix}_${Date.now()}.jpg`);
-    fs.writeFileSync(tempPath, response.data);
-    return tempPath;
+    return new Blob([response.data], { type: 'image/jpeg' });
+};
+
+/**
+ * Get or create duplicated client
+ * Using duplicate() creates a private copy of the Space to avoid ZeroGPU quotas
+ */
+const getClient = async () => {
+    if (cachedClient) {
+        console.log('♻️ Using cached client...');
+        return cachedClient;
+    }
+
+    const hasToken = !!process.env.HUGGINGFACE_API_KEY;
+    console.log(`🔑 HF Token configured: ${hasToken ? 'YES' : 'NO'} (${hasToken ? process.env.HUGGINGFACE_API_KEY.substring(0, 5) + '...' : ''})`);
+
+    if (!hasToken) {
+        throw new Error('HUGGINGFACE_API_KEY is required for IDM-VTON');
+    }
+
+    // First try to connect normally (in case the space is available)
+    try {
+        console.log('🔗 Attempting to connect to Space...');
+        cachedClient = await Client.connect(SPACE_ID, {
+            hf_token: process.env.HUGGINGFACE_API_KEY
+        });
+        console.log('✅ Connected to Space successfully');
+        return cachedClient;
+    } catch (connectError) {
+        console.log('⚠️ Direct connect failed, trying duplicate...', connectError.message);
+    }
+
+    // If connect fails, try to duplicate the space for private use
+    console.log('� Duplicating Space for private use (this may take a few minutes on first run)...');
+    cachedClient = await Client.duplicate(SPACE_ID, {
+        hf_token: process.env.HUGGINGFACE_API_KEY,
+        timeout: 300, // 5 minute timeout for the space to start
+        private: true // Make it a private space
+    });
+    console.log('✅ Duplicated Space ready');
+    return cachedClient;
 };
 
 /**
@@ -33,51 +73,44 @@ const downloadToTempFile = async (url, prefix) => {
 const performTryOn = async (personImageUrl, garmentImageUrl) => {
     const startTime = Date.now();
     console.log(`🚀 Starting Try-On with model: ${SPACE_ID}`);
-    
-    let personTempPath = null;
-    let garmentTempPath = null;
 
     try {
-        // 1. Initialize Client with HF token
-        const hasToken = !!process.env.HUGGINGFACE_API_KEY;
-        console.log(`🔑 HF Token configured: ${hasToken ? 'YES' : 'NO'} (${hasToken ? process.env.HUGGINGFACE_API_KEY.substring(0, 5) + '...' : ''})`);
+        // 1. Get client (cached or new)
+        const client = await getClient();
 
-        const client = await Client.connect(SPACE_ID, {
-            hf_token: process.env.HUGGINGFACE_API_KEY
-        });
-
-        // 2. Download images to temp files for handle_file
+        // 2. Fetch images as Blobs
         console.log('📥 Downloading images...');
-        personTempPath = await downloadToTempFile(personImageUrl, 'person');
-        garmentTempPath = await downloadToTempFile(garmentImageUrl, 'garment');
+        const personBlob = await fetchImageBlob(personImageUrl);
+        const garmentBlob = await fetchImageBlob(garmentImageUrl);
         console.log('✅ Images downloaded');
 
-        // 3. Use handle_file to properly send images to Gradio
-        // The ImageEditor expects a dict with 'background' as the image
-        const personFile = await handle_file(personTempPath);
-        const garmentFile = await handle_file(garmentTempPath);
-
-        // 4. Prepare inputs matching the Gradio interface
+        // 3. Prepare inputs matching the Gradio interface
         // Based on app.py: start_tryon(dict, garm_img, garment_des, is_checked, is_checked_crop, denoise_steps, seed)
         // The 'dict' is from gr.ImageEditor with {background, layers, composite}
+        // For gr.ImageEditor, pass the blob directly wrapped with handle_file
+        const personFile = handle_file(personBlob);
+        const garmentFile = handle_file(garmentBlob);
+
+        console.log('⏳ Sending request to Hugging Face Space (this may take 30-60s)...');
+
+        // The ImageEditor component expects background as the main image
         const imageEditorInput = {
             background: personFile,
             layers: [],
             composite: null
         };
 
-        console.log('⏳ Sending request to Hugging Face Space (this may take 30-60s)...');
-
-        // Call the /tryon endpoint with proper parameters
-        const result = await client.predict("/tryon", {
-            dict: imageEditorInput,        // ImageEditor input
-            garm_img: garmentFile,         // Garment image
-            garment_des: "A stylish garment", // Description
-            is_checked: true,              // Use auto-masking
-            is_checked_crop: false,        // Don't auto-crop
-            denoise_steps: 30,             // Denoising steps
-            seed: 42                       // Random seed
-        });
+        // Call the /tryon endpoint with array parameters (positional args)
+        // Based on: try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, is_checked, is_checked_crop, denoise_steps, seed])
+        const result = await client.predict("/tryon", [
+            imageEditorInput,           // imgs (ImageEditor dict)
+            garmentFile,                 // garm_img
+            "A stylish garment",        // prompt (garment description)
+            true,                        // is_checked (use auto-generated mask)
+            false,                       // is_checked_crop (use auto-crop)
+            30,                          // denoise_steps
+            42                           // seed
+        ]);
 
         const processingTime = Date.now() - startTime;
         console.log(`✅ Try-on completed in ${processingTime}ms`);
@@ -103,7 +136,7 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
         } else if (outputImage instanceof Blob) {
             outputBuffer = Buffer.from(await outputImage.arrayBuffer());
         } else {
-            console.error('Unexpected output format:', outputImage);
+            console.error('Unexpected output format:', JSON.stringify(outputImage));
             throw new Error('Unexpected output format from Gradio client');
         }
 
@@ -115,7 +148,7 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
 
     } catch (error) {
         console.error('❌ AI Service Error:', error);
-        
+
         // Log more details for debugging
         if (error.message) {
             console.error('Error message:', error.message);
@@ -125,24 +158,15 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
             console.error('Response data:', error.response.data);
         }
 
+        // Reset cached client on error so next call tries fresh
+        cachedClient = null;
+
         const processingTime = Date.now() - startTime;
         return {
             success: false,
             error: error.message || 'Try-on processing failed',
             processingTime
         };
-    } finally {
-        // Clean up temp files
-        try {
-            if (personTempPath && fs.existsSync(personTempPath)) {
-                fs.unlinkSync(personTempPath);
-            }
-            if (garmentTempPath && fs.existsSync(garmentTempPath)) {
-                fs.unlinkSync(garmentTempPath);
-            }
-        } catch (cleanupError) {
-            console.warn('Failed to cleanup temp files:', cleanupError.message);
-        }
     }
 };
 
