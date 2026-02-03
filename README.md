@@ -74,4 +74,3 @@ npm start
 - `DELETE /api/admin/garments/:id` - Delete garment
 - `GET /api/admin/analytics` - Get analytics
 - `GET /api/admin/logs` - Get system logs
-"# IDM-VTON-backend" 

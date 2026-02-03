@@ -21,7 +21,9 @@ const logSchema = new mongoose.Schema({
             'garment_delete',
             'user_block',
             'user_unblock',
-            'admin_action'
+            'admin_action',
+            'user_create',
+            'user_role_update'
         ]
     },
     userId: {

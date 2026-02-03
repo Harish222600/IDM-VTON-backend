@@ -62,6 +62,17 @@ const validate = (req, res, next) => {
     next();
 };
 
+const validateUserCreate = [
+    body('name').trim().notEmpty().withMessage('Name is required'),
+    body('email').isEmail().withMessage('Valid email is required'),
+    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    body('role').optional().isIn(['user', 'admin']).withMessage('Invalid role')
+];
+
+const validateUserRole = [
+    body('role').isIn(['user', 'admin']).withMessage('Invalid role')
+];
+
 // All routes require auth + admin
 router.use(auth, adminAuth);
 
@@ -70,6 +81,8 @@ router.get('/users', adminController.getUsers);
 router.put('/users/:id/block', adminController.toggleUserBlock);
 router.delete('/users/:id', adminController.deleteUser);
 router.get('/users/:id/activity', adminController.getUserActivity);
+router.post('/users', validateUserCreate, validate, adminController.createUser);
+router.put('/users/:id/role', validateUserRole, validate, adminController.updateUserRole);
 
 // Garment management
 router.get('/garments', adminController.getAllGarments);

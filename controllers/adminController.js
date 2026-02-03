@@ -138,6 +138,86 @@ const deleteUser = async (req, res, next) => {
 };
 
 /**
+ * @desc    Create new user
+ * @route   POST /api/admin/users
+ * @access  Admin
+ */
+const createUser = async (req, res, next) => {
+    try {
+        const { name, email, password, role } = req.body;
+
+        // Check if user exists
+        const existingUser = await User.findOne({ email: email.toLowerCase() });
+        if (existingUser) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email already registered'
+            });
+        }
+
+        const user = await User.create({
+            name,
+            email: email.toLowerCase(),
+            password,
+            role: role || 'user'
+        });
+
+        // Log creation
+        await Log.createLog('user_create', req.user._id, { targetUserId: user._id, email: user.email }, req);
+
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully',
+            data: user
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Update user role
+ * @route   PUT /api/admin/users/:id/role
+ * @access  Admin
+ */
+const updateUserRole = async (req, res, next) => {
+    try {
+        const { role } = req.body;
+        const user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        if (user.role === 'admin' && role !== 'admin') {
+            // Prevent removing the last admin? (Optional safety check, skipping for now to keep it simple)
+        }
+
+        const oldRole = user.role;
+        user.role = role;
+        await user.save();
+
+        // Log role change
+        await Log.createLog('user_role_update', req.user._id, {
+            targetUserId: user._id,
+            oldRole,
+            newRole: role
+        }, req);
+
+        res.status(200).json({
+            success: true,
+            message: 'User role updated successfully',
+            data: user
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * @desc    Get user activity
  * @route   GET /api/admin/users/:id/activity
  * @access  Admin
@@ -427,6 +507,8 @@ module.exports = {
     toggleUserBlock,
     deleteUser,
     getUserActivity,
+    createUser,
+    updateUserRole,
     createGarment,
     updateGarment,
     deleteGarment,
