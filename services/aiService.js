@@ -32,7 +32,8 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
     try {
         // 1. Initialize Client
         // We use hf_token if available to avoid rate limits/queue
-        let token = process.env.HUGGINGFACE_API_KEY;
+        // Try HUGGINGFACE_API_KEY first, then HF_TOKEN
+        let token = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
 
         // Sanitize token: remove quotes and whitespace if present
         if (token) {
@@ -40,7 +41,12 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
         }
 
         const hasToken = !!token;
-        console.log(`🔑 HF Token configured: ${hasToken ? 'YES' : 'NO'} (${hasToken ? token.substring(0, 5) + '...' : ''})`);
+        const debugToken = hasToken ? (token.length > 10 ? token.substring(0, 10) + '...' : '****') : 'NONE';
+        console.log(`🔑 HF Token configured: ${hasToken ? 'YES' : 'NO'} (Value: ${debugToken})`);
+
+        if (hasToken && debugToken.startsWith('hf_hW')) {
+            console.error('⚠️ WARNING: It looks like you are using an OLD or DUPLICATE token (starts with hf_hW). Check your Render Environment Variables.');
+        }
 
         const options = {};
         if (hasToken) {
