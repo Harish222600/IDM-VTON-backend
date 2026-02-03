@@ -18,6 +18,9 @@ const { errorHandler, notFound } = require('./middleware');
 // Initialize app
 const app = express();
 
+// Trust Render's proxy
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
