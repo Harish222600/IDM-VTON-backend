@@ -7,5 +7,6 @@ module.exports = {
     User,
     Garment,
     TryOnResult,
-    Log
+    Log,
+    SystemConfig: require('./SystemConfig')
 };

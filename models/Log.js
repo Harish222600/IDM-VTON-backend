@@ -23,7 +23,8 @@ const logSchema = new mongoose.Schema({
             'user_unblock',
             'admin_action',
             'user_create',
-            'user_role_update'
+            'user_role_update',
+            'system_config_update'
         ]
     },
     userId: {

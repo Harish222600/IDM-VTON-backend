@@ -502,6 +502,75 @@ const getLogs = async (req, res, next) => {
     }
 };
 
+/**
+ * @desc    Get system configuration
+ * @route   GET /api/admin/config
+ * @access  Admin
+ */
+const getSystemConfig = async (req, res, next) => {
+    try {
+        let config = await require('../models/SystemConfig').findOne({ key: 'main_config' });
+
+        if (!config) {
+            config = await require('../models/SystemConfig').create({
+                key: 'main_config',
+                activeModel: 'IDM-VTON'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: config
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Update system configuration
+ * @route   PUT /api/admin/config
+ * @access  Admin
+ */
+const updateSystemConfig = async (req, res, next) => {
+    try {
+        const { activeModel } = req.body;
+
+        if (!['IDM-VTON', 'OOTDiffusion'].includes(activeModel)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid model selection'
+            });
+        }
+
+        let config = await require('../models/SystemConfig').findOne({ key: 'main_config' });
+
+        if (!config) {
+            config = await require('../models/SystemConfig').create({
+                key: 'main_config',
+                activeModel
+            });
+        } else {
+            config.activeModel = activeModel;
+            config.updatedBy = req.user._id;
+            await config.save();
+        }
+
+        // Log configuration update
+        await Log.createLog('system_config_update', req.user._id, {
+            activeModel
+        }, req);
+
+        res.status(200).json({
+            success: true,
+            message: 'System configuration updated',
+            data: config
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getUsers,
     toggleUserBlock,
@@ -514,5 +583,7 @@ module.exports = {
     deleteGarment,
     getAllGarments,
     getAnalytics,
-    getLogs
+    getLogs,
+    getSystemConfig,
+    updateSystemConfig
 };

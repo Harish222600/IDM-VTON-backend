@@ -1,9 +1,12 @@
 const { Client } = require('@gradio/client');
 const axios = require('axios');
 const fs = require('fs');
+const SystemConfig = require('../models/SystemConfig');
 
-// We use the exact model space provided by the user
-const SPACE_ID = 'yisol/IDM-VTON';
+// Models
+const IDM_VTON_SPACE = 'yisol/IDM-VTON';
+const OOT_DIFFUSION_SPACE = 'levihsu/OOTDiffusion';
+
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 5000;
 
@@ -21,96 +24,133 @@ const fetchImageBlob = async (url) => {
 };
 
 /**
- * Perform virtual try-on using Gradio Client for yisol/IDM-VTON
- * @param {string} personImageUrl - Public URL of person image
- * @param {string} garmentImageUrl - Public URL of garment image
+ * Perform virtual try-on
+ * @param {string} personImageUrl 
+ * @param {string} garmentImageUrl 
+ * @param {string} garmentDescription 
+ * @param {string} category - 'upper_body', 'lower_body', 'dress'
  */
-const performTryOn = async (personImageUrl, garmentImageUrl) => {
+const performTryOn = async (personImageUrl, garmentImageUrl, garmentDescription, category) => {
     const startTime = Date.now();
-    console.log(`🚀 Starting Try-On with model: ${SPACE_ID}`);
 
     try {
-        // 1. Initialize Client
-        // We use hf_token if available to avoid rate limits/queue
-        // Try HUGGINGFACE_API_KEY first, then HF_TOKEN
-        let token = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
+        // Get active model from config
+        let config = await SystemConfig.findOne({ key: 'main_config' });
+        const activeModel = config ? config.activeModel : 'IDM-VTON';
 
-        // Sanitize token: remove quotes and whitespace if present
-        if (token) {
-            token = token.replace(/["']/g, '').trim();
-        }
+        console.log(`🚀 Starting Try-On with model: ${activeModel}`);
 
-        const hasToken = !!token;
-        const debugToken = hasToken ? (token.length > 10 ? token.substring(0, 10) + '...' : '****') : 'NONE';
-        console.log(`🔑 HF Token configured: ${hasToken ? 'YES' : 'NO'} (Value: ${debugToken})`);
+        // Use token from environment variables
+        const token = process.env.HUGGINGFACE_API_KEY;
+        const options = token ? { hf_token: token } : {};
 
-        if (hasToken && debugToken.startsWith('hf_hW')) {
-            console.error('⚠️ WARNING: It looks like you are using an OLD or DUPLICATE token (starts with hf_hW). Check your Render Environment Variables.');
-        }
+        let client;
+        let result;
 
-        const options = {};
-        if (hasToken) {
-            options.hf_token = token;
-        }
-
-        const client = await Client.connect(SPACE_ID, options);
-
-        // 2. Fetch images as Blobs (Gradio JS client handles Blobs best for 'handle_file')
+        // 2. Fetch images
         const personBlob = await fetchImageBlob(personImageUrl);
         const garmentBlob = await fetchImageBlob(garmentImageUrl);
 
-        // 3. Prepare inputs matching the Python implementation
-        // The space expects 'dict' for person image with background/layers/composite
-        const imageEditorDict = {
-            background: personBlob,
-            layers: [],
-            composite: null
-        };
+        if (activeModel === 'OOTDiffusion') {
+            client = await Client.connect(OOT_DIFFUSION_SPACE, options);
+            console.log(`🔌 Connected to ${OOT_DIFFUSION_SPACE}`);
 
-        // 4. Predict
-        // Corresponding to:
-        // result = client.predict(
-        //     dict=image_editor_dict, 
-        //     garm_img=garmentBlob, 
-        //     garment_des="A shirt", 
-        //     is_checked=true, 
-        //     is_checked_crop=false, 
-        //     denoise_steps=30, 
-        //     seed=42
-        // )
+            // Map category to OOTDiffusion inputs
+            // Upper-body -> /process_hd
+            // Lower-body / Dress -> /process_dc
 
-        console.log('⏳ Sending request to Hugging Face Space (this may take 30-60s)...');
+            if (category === 'upper_body') {
+                console.log('⚡ Using /process_hd for Upper-body');
+                result = await client.predict("/process_hd", [
+                    personBlob,      // vton_img
+                    garmentBlob,     // garm_img
+                    1,               // n_samples
+                    20,              // n_steps (default)
+                    2,               // image_scale (guidance)
+                    -1               // seed (-1 for random)
+                ]);
+            } else {
+                console.log('⚡ Using /process_dc for Lower-body/Dress');
+                const ootdCategory = category === 'lower_body' ? 'Lower-body' : 'Dress';
 
-        const result = await client.predict("/tryon", [
-            imageEditorDict,    // dict
-            garmentBlob,        // garm_img
-            "A shirt",          // garment_des (generic description works)
-            true,               // is_checked (auto-masking)
-            false,              // is_checked_crop
-            30,                 // denoise_steps
-            42                  // seed
-        ]);
+                result = await client.predict("/process_dc", [
+                    personBlob,      // vton_img
+                    garmentBlob,     // garm_img
+                    ootdCategory,    // category
+                    1,               // n_samples
+                    20,              // n_steps
+                    2,               // image_scale
+                    -1               // seed
+                ]);
+            }
+
+        } else {
+            // Default: IDM-VTON
+            client = await Client.connect(IDM_VTON_SPACE, options);
+            console.log(`Using Hardcoded Token for IDM-VTON...`);
+
+            const imageEditorDict = {
+                background: personBlob,
+                layers: [],
+                composite: null
+            };
+
+            console.log('⏳ Sending request to Hugging Face Space (IDM-VTON)...');
+            console.log(`👕 Garment Description: "${garmentDescription}"`);
+
+            result = await client.predict("/tryon", [
+                imageEditorDict,    // dict
+                garmentBlob,        // garm_img
+                garmentDescription || "A shirt",
+                true,               // is_checked (auto-masking)
+                false,              // is_checked_crop
+                30,                 // denoise_steps
+                42                  // seed
+            ]);
+        }
 
         const processingTime = Date.now() - startTime;
         console.log(`✅ Try-on completed in ${processingTime}ms`);
 
-        // The result is usually [output_image_info, masked_image_info]
-        // In JS client, we get an object with 'data' and the data itself might be a URL or Blob
-        // Let's inspect the structure. Usually result.data contains the outputs.
-
+        // Handle Result (Standardize output)
+        // Check pattern of result.data
         const outputImage = result.data[0];
 
-        // The output from gradio/client can be a URL or a Blob info depending on the version
-        // We need to convert this back to a buffer for us to upload to Supabase
+        // OOTDiffusion returns [{image: "url", caption: ""}] sometimes, or similar structure
+        // Gradio Client normalizes this usually.
+        // IDM-VTON returns result.data[0] as the image.
 
         let outputBuffer;
+        let imageUrlToFetch;
+
         if (outputImage && outputImage.url) {
-            // It's a remote URL from the Gradio space
-            const response = await axios.get(outputImage.url, { responseType: 'arraybuffer' });
-            outputBuffer = Buffer.from(response.data);
+            imageUrlToFetch = outputImage.url;
+        } else if (Array.isArray(outputImage) && outputImage[0] && outputImage[0].image && outputImage[0].image.url) {
+            // OOTDiffusion gallery format sometimes
+            imageUrlToFetch = outputImage[0].image.url;
         } else if (outputImage instanceof Blob) {
             outputBuffer = Buffer.from(await outputImage.arrayBuffer());
-        } else {
+        }
+
+        if (!outputBuffer && imageUrlToFetch) {
+            const response = await axios.get(imageUrlToFetch, { responseType: 'arraybuffer' });
+            outputBuffer = Buffer.from(response.data);
+        }
+
+        if (!outputBuffer) {
+            // Fallback/Error check
+            console.log("Debug Result Data:", JSON.stringify(result.data).substring(0, 200));
+            if (activeModel === 'OOTDiffusion' && result.data[0] && Array.isArray(result.data[0])) {
+                // Gallery format check [ [{image:..., caption:...}] ]
+                const firstItem = result.data[0][0];
+                if (firstItem && firstItem.image && firstItem.image.url) {
+                    const response = await axios.get(firstItem.image.url, { responseType: 'arraybuffer' });
+                    outputBuffer = Buffer.from(response.data);
+                }
+            }
+        }
+
+        if (!outputBuffer) {
             throw new Error('Unexpected output format from Gradio client');
         }
 
@@ -137,15 +177,16 @@ const performTryOn = async (personImageUrl, garmentImageUrl) => {
  */
 const checkModelStatus = async () => {
     try {
+        let config = await SystemConfig.findOne({ key: 'main_config' });
+        const activeModel = config ? config.activeModel : 'IDM-VTON';
+        const spaceId = activeModel === 'OOTDiffusion' ? OOT_DIFFUSION_SPACE : IDM_VTON_SPACE;
+
         // Simple check by connecting
-        let token = process.env.HUGGINGFACE_API_KEY;
-        if (token) {
-            token = token.replace(/["']/g, '').trim();
-        }
+        const token = process.env.HUGGINGFACE_API_KEY;
         const options = token ? { hf_token: token } : {};
 
-        await Client.connect(SPACE_ID, options);
-        return { available: true, status: 'Connected' };
+        await Client.connect(spaceId, options);
+        return { available: true, status: `Connected to ${activeModel}` };
     } catch (error) {
         return { available: false, error: error.message };
     }

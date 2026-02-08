@@ -50,9 +50,32 @@ const initiateTryOn = async (req, res, next) => {
             garmentImageUrl: garment.imageUrl
         });
 
+        // Create a descriptive string for the garment to help the AI model
+        // e.g. "A red shirt", "blue jeans", "A floral dress"
+        const garmentDescription = [
+            garment.color,
+            garment.category,
+            garment.name
+        ].filter(Boolean).join(' ') || "A generic garment";
+
+        console.log(`Using garment description: "${garmentDescription}"`);
+
+        // Determine category for AI service
+        // OOTDiffusion needs: 'upper_body', 'lower_body', or 'dress'
+        let category = 'upper_body';
+        const lowerBodyKeywords = ['pants', 'trousers', 'shorts', 'skirt', 'jeans', 'lower'];
+        const dressKeywords = ['dress', 'gown', 'saree', 'kurti'];
+
+        const garmentCat = garment.category.toLowerCase();
+        if (dressKeywords.some(k => garmentCat.includes(k))) {
+            category = 'dress';
+        } else if (lowerBodyKeywords.some(k => garmentCat.includes(k))) {
+            category = 'lower_body';
+        }
+
         // Perform AI try-on
         // Note: performTryOn expects URLs, not Buffers, as per the new @gradio/client implementation
-        const result = await aiService.performTryOn(inputImageUrl, garment.imageUrl);
+        const result = await aiService.performTryOn(inputImageUrl, garment.imageUrl, garmentDescription, category);
 
         if (result.success) {
             // Upload output image

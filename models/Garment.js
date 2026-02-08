@@ -12,7 +12,7 @@ const garmentSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Category is required'],
         enum: {
-            values: ['shirt', 'kurti', 'saree', 'dress', 'pants', 'jacket', 't-shirt', 'blouse', 'sweater', 'other'],
+            values: ['shirt', 'kurti', 'saree', 'dress', 'pants', 'trousers', 'shorts', 'skirt', 'jeans', 'jacket', 't-shirt', 'blouse', 'sweater', 'other'],
             message: '{VALUE} is not a valid category'
         }
     },
