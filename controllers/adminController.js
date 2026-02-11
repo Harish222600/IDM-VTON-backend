@@ -571,6 +571,41 @@ const updateSystemConfig = async (req, res, next) => {
     }
 };
 
+
+/**
+ * @desc    Get garment usage stats
+ * @route   GET /api/admin/analytics/garment-usage
+ * @access  Admin
+ */
+const getGarmentUsage = async (req, res, next) => {
+    try {
+        const stats = await AnalyticsService.getGarmentUsageStats();
+        res.status(200).json({
+            success: true,
+            data: stats
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Get user usage stats
+ * @route   GET /api/admin/analytics/user-usage
+ * @access  Admin
+ */
+const getUserUsage = async (req, res, next) => {
+    try {
+        const stats = await AnalyticsService.getUserUsageStats();
+        res.status(200).json({
+            success: true,
+            data: stats
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getUsers,
     toggleUserBlock,
@@ -585,5 +620,7 @@ module.exports = {
     getAnalytics,
     getLogs,
     getSystemConfig,
-    updateSystemConfig
+    updateSystemConfig,
+    getGarmentUsage,
+    getUserUsage
 };

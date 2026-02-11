@@ -161,6 +161,66 @@ class AnalyticsService {
 
         return distribution;
     }
+    /**
+     * Get garment usage stats
+     */
+    static async getGarmentUsageStats(limit = 50) {
+        const stats = await TryOnResult.aggregate([
+            { $group: { _id: '$garmentId', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: limit },
+            {
+                $lookup: {
+                    from: 'garments',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'garment'
+                }
+            },
+            { $unwind: '$garment' },
+            {
+                $project: {
+                    _id: '$garment._id',
+                    name: '$garment.name',
+                    category: '$garment.category',
+                    imageUrl: '$garment.imageUrl',
+                    tryOnCount: '$count',
+                    gender: '$garment.gender'
+                }
+            }
+        ]);
+        return stats;
+    }
+
+    /**
+     * Get user usage stats
+     */
+    static async getUserUsageStats(limit = 50) {
+        const stats = await TryOnResult.aggregate([
+            { $group: { _id: '$userId', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: limit },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'user'
+                }
+            },
+            { $unwind: '$user' },
+            {
+                $project: {
+                    _id: '$user._id',
+                    name: '$user.name',
+                    email: '$user.email',
+                    tryOnCount: '$count',
+                    joinedAt: '$user.createdAt'
+                }
+            }
+        ]);
+        return stats;
+    }
 }
 
 module.exports = AnalyticsService;

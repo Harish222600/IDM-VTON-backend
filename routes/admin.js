@@ -92,6 +92,8 @@ router.delete('/garments/:id', adminController.deleteGarment);
 
 // Analytics & Logs
 router.get('/analytics', adminController.getAnalytics);
+router.get('/analytics/garment-usage', adminController.getGarmentUsage);
+router.get('/analytics/user-usage', adminController.getUserUsage);
 router.get('/logs', adminController.getLogs);
 
 // System Configuration
