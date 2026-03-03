@@ -40,14 +40,24 @@ const performTryOn = async (personImageUrl, garmentImageUrl, garmentDescription,
 
         console.log(`🚀 Starting Try-On with model: ${activeModel}`);
 
-        // Use token from environment variables
-        const token = process.env.HUGGINGFACE_API_KEY;
+        // Use token from environment variables — trim to remove any whitespace/newlines
+        const rawToken = process.env.HUGGINGFACE_API_KEY;
+        const token = rawToken ? rawToken.trim() : null;
+
+        // Debug: log token status (never log the actual token!)
+        if (!token) {
+            console.error('⚠️ HUGGINGFACE_API_KEY is NOT set in environment variables!');
+            console.error('   Available env vars:', Object.keys(process.env).filter(k => k.includes('HUGGING') || k.includes('HF')).join(', ') || 'NONE');
+        } else {
+            console.log(`✅ HuggingFace token loaded (starts with: ${token.substring(0, 6)}..., length: ${token.length})`);
+        }
+
         const options = token ? { hf_token: token } : {};
 
         let client;
         let result;
 
-        // 2. Fetch images
+        // Fetch images
         const personBlob = await fetchImageBlob(personImageUrl);
         const garmentBlob = await fetchImageBlob(garmentImageUrl);
 
@@ -87,7 +97,7 @@ const performTryOn = async (personImageUrl, garmentImageUrl, garmentDescription,
         } else {
             // Default: IDM-VTON
             client = await Client.connect(IDM_VTON_SPACE, options);
-            console.log(`Using Hardcoded Token for IDM-VTON...`);
+            console.log(`✅ Connected to ${IDM_VTON_SPACE} (token provided: ${!!token})`);
 
             const imageEditorDict = {
                 background: personBlob,
@@ -164,9 +174,23 @@ const performTryOn = async (personImageUrl, garmentImageUrl, garmentDescription,
         console.error('❌ AI Service Error:', error);
 
         const processingTime = Date.now() - startTime;
+
+        // Detect ZeroGPU quota / auth errors specifically
+        const errorMsg = error.message || '';
+        if (errorMsg.includes('ZeroGPU') || errorMsg.includes('Unlogged user')) {
+            console.error('🔑 TOKEN ISSUE: The HuggingFace API token is either missing, invalid, or expired.');
+            console.error('   Please verify HUGGINGFACE_API_KEY in your environment variables.');
+            console.error('   Generate a new token at: https://huggingface.co/settings/tokens');
+            return {
+                success: false,
+                error: 'AI service authentication failed. The HuggingFace API token may be invalid or expired. Please contact the administrator.',
+                processingTime
+            };
+        }
+
         return {
             success: false,
-            error: error.message || 'Try-on processing failed',
+            error: errorMsg || 'Try-on processing failed',
             processingTime
         };
     }
